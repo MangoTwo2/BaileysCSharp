@@ -25,6 +25,7 @@ namespace BaileysCSharp.Core
     public abstract class BaseSocket : IDisposable
     {
         protected ConcurrentDictionary<string, TaskCompletionSource<BinaryNode>> waits = new ConcurrentDictionary<string, TaskCompletionSource<BinaryNode>>();
+        private readonly SemaphoreSlim _frameProcessingSemaphore = new(1, 1);
 
         private string[] Browser = ["Ubuntu", "Chrome", "20.0.04",];
         protected AbstractSocketClient WS;
@@ -221,54 +222,61 @@ namespace BaileysCSharp.Core
 
         private async void OnFrameDeecoded(BinaryNode frame)
         {
-            bool anyTriggered = await Emit("frame", frame);
-
-
-            if (frame.tag != "handshake")
+            // Serialize frame processing to prevent out-of-order handling
+            // (the receive loop fires this as async void, so concurrent frames can overlap)
+            await _frameProcessingSemaphore.WaitAsync();
+            try
             {
-                var msgId = frame.getattr("id");
+                bool anyTriggered = await Emit("frame", frame);
 
-
-                if (Logger.Level == LogLevel.Trace)
+                if (frame.tag != "handshake")
                 {
-                    Logger.Trace(new { xml = frame }, "recv send");
+                    var msgId = frame.getattr("id");
+
+                    if (Logger.Level == LogLevel.Trace)
+                    {
+                        Logger.Trace(new { xml = frame }, "recv send");
+                    }
+
+                    /* Check if this is a response to a message we sent */
+                    anyTriggered = anyTriggered || await Emit($"{DEF_TAG_PREFIX}{msgId}", frame);
+
+                    /* Check if this is a response to a message we are expecting */
+                    var l0 = frame.tag;
+                    var l1 = frame.attrs;
+
+                    var l2 = "";
+                    if (frame.content is BinaryNode[] children)
+                    {
+                        l2 = children[0].tag;
+                    }
+
+                    foreach (var item in l1)
+                    {
+                        anyTriggered = anyTriggered || await Emit($"{DEF_CALLBACK_PREFIX}{l0},{item.Key}:{l1[item.Key]},{l2}", frame);
+                        anyTriggered = anyTriggered || await Emit($"{DEF_CALLBACK_PREFIX}{l0},{item.Key}:{l1[item.Key]}", frame);
+                        anyTriggered = anyTriggered || await Emit($"{DEF_CALLBACK_PREFIX}{l0},{item.Key}", frame);
+                    }
+                    anyTriggered = anyTriggered || await Emit($"{DEF_CALLBACK_PREFIX}{l0},,{l2}", frame) || anyTriggered;
+                    anyTriggered = anyTriggered || await Emit($"{DEF_CALLBACK_PREFIX}{l0}", frame) || anyTriggered;
+
+                    // Log all incoming frame tags for diagnostics
+                    try
+                    {
+                        var logPath = Path.Combine(SocketConfig.CacheRoot, "native_bridge.log");
+                        File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] frame: tag={l0}, attrs=[{string.Join(",", l1.Select(kv => $"{kv.Key}={kv.Value}"))}], child={l2}, triggered={anyTriggered}\n");
+                    }
+                    catch { }
+
+                    if (!anyTriggered && Logger.Level == LogLevel.Debug)
+                    {
+                        Logger.Debug(new { unhandled = true, msgId, fromMe = false, frame }, "communication recv");
+                    }
                 }
-
-                /* Check if this is a response to a message we sent */
-                anyTriggered = anyTriggered || await Emit($"{DEF_TAG_PREFIX}{msgId}", frame);
-
-
-                /* Check if this is a response to a message we are expecting */
-                var l0 = frame.tag;
-                var l1 = frame.attrs;
-
-                var l2 = "";
-                if (frame.content is BinaryNode[] children)
-                {
-                    l2 = children[0].tag;
-                }
-
-                foreach (var item in l1)
-                {
-                    anyTriggered = anyTriggered || await Emit($"{DEF_CALLBACK_PREFIX}{l0},{item.Key}:{l1[item.Key]},{l2}", frame);
-                    anyTriggered = anyTriggered || await Emit($"{DEF_CALLBACK_PREFIX}{l0},{item.Key}:{l1[item.Key]}", frame);
-                    anyTriggered = anyTriggered || await Emit($"{DEF_CALLBACK_PREFIX}{l0},{item.Key}", frame);
-                }
-                anyTriggered = anyTriggered || await Emit($"{DEF_CALLBACK_PREFIX}{l0},,{l2}", frame) || anyTriggered;
-                anyTriggered = anyTriggered || await Emit($"{DEF_CALLBACK_PREFIX}{l0}", frame) || anyTriggered;
-
-                // Log all incoming frame tags for diagnostics
-                try
-                {
-                    var logPath = Path.Combine(SocketConfig.CacheRoot, "native_bridge.log");
-                    File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] frame: tag={l0}, attrs=[{string.Join(",", l1.Select(kv => $"{kv.Key}={kv.Value}"))}], child={l2}, triggered={anyTriggered}\n");
-                }
-                catch { }
-
-                if (!anyTriggered && Logger.Level == LogLevel.Debug)
-                {
-                    Logger.Debug(new { unhandled = true, msgId, fromMe = false, frame }, "communication recv");
-                }
+            }
+            finally
+            {
+                _frameProcessingSemaphore.Release();
             }
         }
 
@@ -506,9 +514,15 @@ namespace BaileysCSharp.Core
             {
                 throw new Exception("Connection Closed");
             }
-            waits["handshake"] = new TaskCompletionSource<BinaryNode>();
+            var tcs = new TaskCompletionSource<BinaryNode>(TaskCreationOptions.RunContinuationsAsynchronously);
+            waits["handshake"] = tcs;
             SendRawMessage(bytes);
-            var message = await waits["handshake"].Task;
+
+            // Timeout: if server doesn't respond within 20s, cancel the handshake
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            cts.Token.Register(() => tcs.TrySetCanceled(), useSynchronizationContext: false);
+
+            var message = await tcs.Task;
             return message.ToByteArray();
         }
 
@@ -523,13 +537,24 @@ namespace BaileysCSharp.Core
 
         private void Client_Opened(AbstractSocketClient sender)
         {
+            _ = ValidateConnectionSafe();
+        }
+
+        private async Task ValidateConnectionSafe()
+        {
             try
             {
-                ValidateConnection();
+                await ValidateConnection();
+            }
+            catch (OperationCanceledException)
+            {
+                Logger.Error("handshake timed out");
+                End(new Boom("Handshake timed out", new BoomData((int)DisconnectReason.TimedOut)));
             }
             catch (Exception ex)
             {
                 Logger.Error(ex, "error in validating connection");
+                End(new Boom("Handshake failed: " + ex.Message, new BoomData((int)DisconnectReason.BadSession)));
             }
         }
 
@@ -628,7 +653,7 @@ namespace BaileysCSharp.Core
         #region Pairing
 
         /** connection handshake */
-        public async void ValidateConnection()
+        public async Task ValidateConnection()
         {
             var helloMsg = new HandshakeMessage()
             {
@@ -687,6 +712,11 @@ namespace BaileysCSharp.Core
          */
         public void MakeSocket()
         {
+            // Defensively unsubscribe before subscribing to prevent handler stacking on reconnect
+            WS.Opened -= Client_Opened;
+            WS.Disconnected -= Client_Disconnected;
+            WS.MessageRecieved -= Client_MessageRecieved;
+
             WS.MakeSocket();
             WS.Opened += Client_Opened;
             WS.Disconnected += Client_Disconnected;
@@ -817,15 +847,14 @@ namespace BaileysCSharp.Core
             keepAliveToken?.Cancel();
             qrTimerToken?.Cancel();
 
-            //try
-            //{
-            //    Client.Disconnect();
-            //}
-            //catch (Exception)
-            //{
-            //}
-
             closed = true;
+
+            // Flush any buffered events so they don't accumulate across failed reconnects
+            if (DidStartBuffer)
+            {
+                EV.Flush(force: true);
+                DidStartBuffer = false;
+            }
 
             EV.Emit(EmitType.Update, new ConnectionState()
             {
@@ -837,40 +866,11 @@ namespace BaileysCSharp.Core
                 }
             });
         }
-        // الداله الاصلية
         private void End(string reason, DisconnectReason connectionLost)
         {
-
-            Logger.Trace(new { reason = connectionLost }, reason);
-
-            keepAliveToken?.Cancel();
-            qrTimerToken?.Cancel();
-
-            closed = true;
-
-            Console.WriteLine($"{reason} - {connectionLost}");
+            End(new Boom(reason, new BoomData((int)connectionLost)));
         }
 
-        // الدالة المعدل
-        //public void End(string reason, DisconnectReason connectionLost)
-        //{
-        //    try
-        //    {
-        //        WS.Disconnect();
-        //    }
-        //    catch (Exception e) 
-        //    {
-        //        Logger.Trace(new { error = e }, reason);
-
-        //    }
-        //    Logger.Trace(new { reason = connectionLost }, reason);
-
-        //    keepAliveToken?.Cancel();
-        //    qrTimerToken?.Cancel();
-
-
-        //    Console.WriteLine($"{reason} - {connectionLost}");
-        //}
 
         public void NewAuth()
         {

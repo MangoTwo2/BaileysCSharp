@@ -289,6 +289,14 @@ namespace BaileysCSharp.Core.Utils
 
         public void DecodeFrameNew(byte[] newData, Action<BinaryNode> action)
         {
+            // Guard: if FinishInit is computing HKDF, buffer data for later
+            if (_isWaitingForTransport)
+            {
+                InBytes = InBytes.Concat(newData).ToArray();
+                _pendingOnFrame = action;
+                return;
+            }
+
             var frame = newData.ToArray();
 
             var message = new BinaryNode()
