@@ -34,9 +34,7 @@ namespace BaileysCSharp.Core.NoSQL
             State = new ConnectionState();
             EV = ev;
             Logger = logger;
-            // Use in-memory database — disk-backed LiteDB is the main performance bottleneck.
-            // Auth credentials and signal keys are persisted separately via FileKeyStore + creds.json.
-            database = new LiteDatabase(":memory:");
+            database = new LiteDatabase($"{root}\\store.db");
 
             chats = new Store<ChatModel>(database);
             contacts = new Store<ContactModel>(database);
