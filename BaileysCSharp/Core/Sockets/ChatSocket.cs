@@ -670,11 +670,8 @@ namespace BaileysCSharp.Core
             var me = Creds?.Me;
             if (type == WAPresence.Available || type == WAPresence.Unavailable)
             {
-                if (me?.Name == null)
-                {
-                    Logger.Warn("no name present, ignoring presence update requests...");
-                    return;
-                }
+                // Use Name, falling back to ID — presence MUST be sent for message delivery
+                var displayName = me?.Name ?? me?.ID?.Split('@')[0] ?? "ProtoShell";
                 EV.Emit(EmitType.Update, new ConnectionState() { IsOnline = type == WAPresence.Available });
 
                 SendNode(new BinaryNode()
@@ -682,7 +679,7 @@ namespace BaileysCSharp.Core
                     tag = "presence",
                     attrs =
                     {
-                        { "name", me?.Name ?? "" },
+                        { "name", displayName },
                         { "type" , type.ToString().ToLowerInvariant() }
                     }
                 });

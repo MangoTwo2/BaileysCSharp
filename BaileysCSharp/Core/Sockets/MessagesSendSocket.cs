@@ -221,9 +221,15 @@ namespace BaileysCSharp.Core.Sockets
         }
 
 
+        private void LogNative(string text)
+        {
+            try { File.AppendAllText(Path.Combine(SocketConfig.CacheRoot, "native_bridge.log"), $"[{DateTime.Now:HH:mm:ss}] {text}\n"); } catch { }
+        }
+
         public async Task<WebMessageInfo?> SendMessage(string jid, IAnyMessageContent content, IMiscMessageGenerationOptions? options = null)
         {
             var userJid = Creds.Me.ID;
+            LogNative($"SendMessage ENTER: jid={jid}, contentType={content.GetType().Name}, userJid={userJid}");
 
             if (IsJidNewsletter(jid))
             {
@@ -293,6 +299,7 @@ namespace BaileysCSharp.Core.Sockets
         {
             var meId = Creds.Me.ID;
             var meLid = Creds.Me?.LID;
+            LogNative($"RelayMessage ENTER: jid={jid}, meId={meId}, meLid={meLid}");
             var shouldIncludeDeviceIdentity = false;
 
             var jidDecoded = JidDecode(jid);
@@ -463,6 +470,7 @@ namespace BaileysCSharp.Core.Sockets
                 var mePnUser = JidDecode(meId)?.User;
                 var meLidUser = !string.IsNullOrEmpty(meLid) ? JidDecode(meLid)?.User : null;
 
+                LogNative($"RelayMessage 1:1: isLid={isLid}, user={user}, meUser={meUser}, mePnUser={mePnUser}, meLidUser={meLidUser}");
                 if (options.Participant == null)
                 {
                     // Use conversation-appropriate addressing for target and sender
@@ -517,7 +525,10 @@ namespace BaileysCSharp.Core.Sockets
                     allJids.Add(addJid);
                 }
 
+                LogNative($"RelayMessage: allJids=[{string.Join(", ", allJids)}], meJids=[{string.Join(", ", meJids)}], otherJids=[{string.Join(", ", otherJids)}]");
+                LogNative($"RelayMessage: calling AssertSessions...");
                 await AssertSessions(allJids, false);
+                LogNative($"RelayMessage: AssertSessions done");
 
                 Dictionary<string, string> mediaTypeAttr = new Dictionary<string, string>()
                 {
