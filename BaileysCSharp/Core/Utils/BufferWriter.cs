@@ -308,6 +308,15 @@ namespace BaileysCSharp.Core.Utils
                 return;
             }
 
+            // Handle empty string explicitly - write as raw (length 0)
+            // Ported from Baileys JS (commit c392d4c): empty strings must be
+            // written directly, not matched against token map
+            if (str == "")
+            {
+                WriteStringRaw(str);
+                return;
+            }
+
             if (TOKEN_MAP.TryGetValue(str, out var tokenIndex))
             {
                 if (tokenIndex.TryGetValue("dict", out var tokenValue))
@@ -324,8 +333,11 @@ namespace BaileysCSharp.Core.Utils
             {
                 WritePackedBytes(str, "hex");
             }
-            else if (str != null)
+            else
             {
+                // Removed redundant null check (str can't be null at this point)
+                // Also: Baileys JS removed the `if (str)` guard to ensure all
+                // non-token strings attempt JID decode, not just truthy ones
                 var decodedJid = JidDecode(str);
                 if (decodedJid != null)
                 {

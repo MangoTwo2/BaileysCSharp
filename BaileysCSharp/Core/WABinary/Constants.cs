@@ -85,6 +85,24 @@ namespace BaileysCSharp.Core.WABinary
         public static byte[] NOISE_WA_HEADER = new byte[] { 87, 65, 6, 3 };
         public const int WA_CERT_DETAILS_SERIAL = 0;
 
+        /// <summary>
+        /// WhatsApp long-term certificate public key for verifying intermediate certificate signatures.
+        /// From Baileys JS WA_CERT_DETAILS.PUBLIC_KEY.
+        /// </summary>
+        public static byte[] WA_CERT_PUBLIC_KEY = Convert.FromHexString("142375574d0a587166aae71ebe516437c4a28b73e3695c6ce1f7f9545da8ee6b");
+
+        /// <summary>
+        /// Status messages older than 24 hours are considered expired.
+        /// From Baileys JS STATUS_EXPIRY_SECONDS.
+        /// </summary>
+        public const int STATUS_EXPIRY_SECONDS = 24 * 60 * 60;
+
+        /// <summary>
+        /// WA Web enforces a 14-day maximum age for placeholder resend requests.
+        /// From Baileys JS PLACEHOLDER_MAX_AGE_SECONDS.
+        /// </summary>
+        public const int PLACEHOLDER_MAX_AGE_SECONDS = 14 * 24 * 60 * 60;
+
         static Constants()
         {
             for (int i = 0; i < SINGLE_BYTE_TOKENS.Length; i++)

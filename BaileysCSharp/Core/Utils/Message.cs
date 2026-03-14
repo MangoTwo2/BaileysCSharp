@@ -48,7 +48,28 @@ namespace BaileysCSharp.Core.Utils
               content.DocumentWithCaptionMessage ??
               content.ViewOnceMessageV2 ??
               content.ViewOnceMessageV2Extension ??
-              content.EditedMessage;
+              content.EditedMessage ??
+              // Ported from Baileys JS (commit a1d69f7): add associatedChildMessage
+              // as one of the options to normalize
+              GetAssociatedChildMessage(content);
+        }
+
+        /// <summary>
+        /// Safely get AssociatedChildMessage as FutureProofMessage.
+        /// Returns null if the proto doesn't have this field yet.
+        /// </summary>
+        private static FutureProofMessage? GetAssociatedChildMessage(Message content)
+        {
+            try
+            {
+                // This field may not exist in older proto definitions
+                var prop = typeof(Message).GetProperty("AssociatedChildMessage");
+                return prop?.GetValue(content) as FutureProofMessage;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         public static PropertyInfo? GetContentType(Message content)

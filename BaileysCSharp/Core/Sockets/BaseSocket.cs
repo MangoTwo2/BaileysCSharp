@@ -38,6 +38,12 @@ namespace BaileysCSharp.Core
         protected Dictionary<string, int> MessageRetries = new Dictionary<string, int>();
         protected Dictionary<string, Func<BinaryNode, Task<bool>>> events = new Dictionary<string, Func<BinaryNode, Task<bool>>>();
 
+        /// <summary>
+        /// Offset between server time and local time, in milliseconds.
+        /// Ported from Baileys JS (commit d514764).
+        /// </summary>
+        private long _serverTimeOffsetMs;
+
         protected SignalRepository Repository { get; set; }
         public MemoryStore Store { get; set; }
 
@@ -382,6 +388,7 @@ namespace BaileysCSharp.Core
             Logger.Debug("pair success recv");
             try
             {
+                UpdateServerTimeOffset(node);
                 var reply = ValidateConnectionUtil.ConfigureSuccessfulPairing(Creds, node);
 
                 Logger.Info(Creds, "pairing configured successfully, expect to restart the connection...");
@@ -391,6 +398,7 @@ namespace BaileysCSharp.Core
                 EV.Emit(EmitType.Update, new ConnectionState() { QR = null, IsNewLogin = true });
 
                 SendNode(reply);
+                SendUnifiedSession();
             }
             catch (Boom error)
             {
@@ -403,11 +411,13 @@ namespace BaileysCSharp.Core
 
         private async Task<bool> OnSuccess(BinaryNode node)
         {
+            UpdateServerTimeOffset(node);
             await UploadPreKeysToServerIfRequired();
             await SendPassiveIq("active");
 
             Logger.Info("opened connection to WA");
             EV.Emit(EmitType.Update, new ConnectionState() { Connection = WAConnectionState.Open });
+            SendUnifiedSession();
             return true;
         }
         private async Task<bool> StreamEnd(BinaryNode node)
@@ -684,6 +694,69 @@ namespace BaileysCSharp.Core
         public void OnUnexpectedError(Exception error, string message)
         {
             Logger.Error(error, $"unexpected error in '{message}'");
+        }
+
+        /// <summary>
+        /// Update server time offset from a node containing a "t" attribute.
+        /// Ported from Baileys JS (commit d514764).
+        /// </summary>
+        private void UpdateServerTimeOffset(BinaryNode node)
+        {
+            if (node.attrs.TryGetValue("t", out var tValue) && !string.IsNullOrEmpty(tValue))
+            {
+                if (long.TryParse(tValue, out var serverTimeSec) && serverTimeSec > 0)
+                {
+                    var localMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    _serverTimeOffsetMs = (serverTimeSec * 1000) - localMs;
+                    Logger.Debug(new { offset = _serverTimeOffsetMs }, "calculated server time offset");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Compute unified session ID using server-time-offset-aware week rotation.
+        /// Ported from Baileys JS (commit d514764).
+        /// </summary>
+        private string GetUnifiedSessionId()
+        {
+            const long ThreeDaysMs = 3L * 24 * 60 * 60 * 1000;
+            const long OneWeekMs = 7L * 24 * 60 * 60 * 1000;
+            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + _serverTimeOffsetMs;
+            var id = (now + ThreeDaysMs) % OneWeekMs;
+            return id.ToString();
+        }
+
+        /// <summary>
+        /// Send unified session telemetry node.
+        /// Ported from Baileys JS (commit d514764).
+        /// </summary>
+        private void SendUnifiedSession()
+        {
+            if (!WS.IsConnected)
+                return;
+
+            try
+            {
+                var node = new BinaryNode("ib")
+                {
+                    attrs = new Dictionary<string, string>(),
+                    content = new BinaryNode[]
+                    {
+                        new BinaryNode("unified_session")
+                        {
+                            attrs = new Dictionary<string, string>()
+                            {
+                                { "id", GetUnifiedSessionId() }
+                            }
+                        }
+                    }
+                };
+                SendNode(node);
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug(new { error = ex.Message }, "failed to send unified_session telemetry");
+            }
         }
 
         private void End(Boom error)

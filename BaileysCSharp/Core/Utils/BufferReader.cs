@@ -167,6 +167,12 @@ namespace BaileysCSharp.Core.Utils
                 case TAGS.JID_PAIR:
                     return ReadJidPair();
 
+                case TAGS.FB_JID:
+                    return ReadFbJid();
+
+                case TAGS.INTEROP_JID:
+                    return ReadInteropJid();
+
                 case TAGS.AD_JID:
                     return ReadAdJid();
 
@@ -255,6 +261,43 @@ namespace BaileysCSharp.Core.Utils
             return JidUtils.JidEncode(user, agent == 0 ? "s.whatsapp.net" : "lid", device);
         }
 
+        /// <summary>
+        /// Read Facebook JID format: user:device@server
+        /// Ported from Baileys JS readFbJid (commit c392d4c)
+        /// </summary>
+        private string ReadFbJid()
+        {
+            var user = ReadString(ReadByte());
+            var device = ReadInt(2);
+            var server = ReadString(ReadByte());
+            return $"{user}:{device}@{server}";
+        }
+
+        /// <summary>
+        /// Read Interop JID format: integrator-user:device@server
+        /// Ported from Baileys JS readInteropJid (commit c392d4c)
+        /// </summary>
+        private string ReadInteropJid()
+        {
+            var user = ReadString(ReadByte());
+            var device = ReadInt(2);
+            var integrator = ReadInt(2);
+
+            var server = "interop";
+            var beforeServer = IndexRef;
+            try
+            {
+                server = ReadString(ReadByte());
+            }
+            catch
+            {
+                // If reading the server fails, reset position and use default
+                IndexRef = beforeServer;
+                InternalStream.Position = IndexRef;
+            }
+
+            return $"{integrator}-{user}:{device}@{server}";
+        }
 
         private string ReadJidPair()
         {

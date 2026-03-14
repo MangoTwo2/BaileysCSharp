@@ -189,14 +189,17 @@ namespace BaileysCSharp.Core.Sockets
                         {
                             tag = "key",
                             attrs = { },
-                            content = jidsRequiringFetch.Select(x => new BinaryNode()
+                            content = jidsRequiringFetch.Select(x =>
                             {
-                                tag = "user",
-                                attrs =
+                                var userAttrs = new Dictionary<string, string> { { "jid", x } };
+                                // When force-refreshing (e.g. identity change), include reason
+                                // Ported from Baileys JS (commit a70e4da)
+                                if (force) userAttrs["reason"] = "identity";
+                                return new BinaryNode()
                                 {
-                                    {"jid",x }
-                                }
-
+                                    tag = "user",
+                                    attrs = userAttrs
+                                };
                             }).ToArray()
                         }
                     }
@@ -577,49 +580,69 @@ namespace BaileysCSharp.Core.Sockets
             return patched.ToByteArray();
         }
 
+        /// <summary>
+        /// Create participant nodes for message encryption.
+        /// Ported from Baileys JS (commit 432c26a): handle encryption failures
+        /// per recipient instead of failing the entire send. Only throw if ALL
+        /// encryptions fail.
+        /// </summary>
         public ParticipantNode CreateParticipantNodes(string[] jids, Message message, Dictionary<string, string>? attrs)
         {
             ParticipantNode result = new ParticipantNode();
             var patched = SocketConfig.PatchMessageBeforeSending(message, jids);
-            var bytes = EncodeWAMessage(patched);//.ToByteArray();
+            var bytes = EncodeWAMessage(patched);
 
             result.ShouldIncludeDeviceIdentity = false;
             List<BinaryNode> nodes = new List<BinaryNode>();
 
             foreach (var jid in jids)
             {
-                var enc = Repository.EncryptMessage(jid, bytes);
-                if (enc.Type == "pkmsg")
+                try
                 {
-                    result.ShouldIncludeDeviceIdentity = true;
-                }
-                var encNode = new BinaryNode()
-                {
-                    tag = "enc",
-                    attrs =
-                            {
-                                {"v","2" },
-                                {"type",enc.Type },
-                            },
-                    content = enc.CipherText
-                };
-                if (attrs != null)
-                {
-                    foreach (var attr in attrs)
+                    var enc = Repository.EncryptMessage(jid, bytes);
+                    if (enc.Type == "pkmsg")
                     {
-                        encNode.attrs[attr.Key] = attr.Value;
+                        result.ShouldIncludeDeviceIdentity = true;
                     }
-                }
-                var node = new BinaryNode()
-                {
-                    tag = "to",
-                    attrs = { { "jid", jid } },
-                    content = new BinaryNode[]
+                    var encNode = new BinaryNode()
                     {
-                        encNode
+                        tag = "enc",
+                        attrs =
+                        {
+                            {"v","2" },
+                            {"type",enc.Type },
+                        },
+                        content = enc.CipherText
+                    };
+                    if (attrs != null)
+                    {
+                        foreach (var attr in attrs)
+                        {
+                            encNode.attrs[attr.Key] = attr.Value;
+                        }
                     }
-                };
-                nodes.Add(node);
+                    var node = new BinaryNode()
+                    {
+                        tag = "to",
+                        attrs = { { "jid", jid } },
+                        content = new BinaryNode[]
+                        {
+                            encNode
+                        }
+                    };
+                    nodes.Add(node);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error(new { jid, error = ex.Message }, "Failed to encrypt for recipient");
+                    // Continue to next recipient instead of failing the entire send
+                }
+            }
+
+            // If we had recipients but all encryptions failed, throw
+            if (jids.Length > 0 && nodes.Count == 0)
+            {
+                throw new Exception("All encryptions failed");
             }
 
             result.Nodes = nodes.ToArray();

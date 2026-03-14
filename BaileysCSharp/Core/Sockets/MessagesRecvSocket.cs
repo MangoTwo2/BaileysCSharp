@@ -294,8 +294,16 @@ namespace BaileysCSharp.Core.Sockets
                 if (identityNode != null)
                 {
                     Logger.Info(new { jid = from }, "identity changed");
-                    // not handling right now
-                    // signal will override new identity anyway
+                    // Ported from Baileys JS (commit a70e4da): on identity change,
+                    // force-refresh the session instead of ignoring it
+                    try
+                    {
+                        await AssertSessions([from], true);
+                    }
+                    catch (Exception error)
+                    {
+                        Logger.Warn(new { error, jid = from }, "failed to assert sessions after identity change");
+                    }
                 }
                 else
                 {
@@ -684,39 +692,65 @@ namespace BaileysCSharp.Core.Sockets
                 // message failed to decrypt
                 if (msg.Msg.MessageStubType == WebMessageInfo.Types.StubType.Ciphertext)
                 {
+                    // Skip retry for expired status messages (>24h old)
+                    // Ported from Baileys JS (commit 92d4198)
+                    if (JidUtils.IsJidStatusBroadcast(msg.Msg.Key.RemoteJid))
+                    {
+                        var messageAge = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - (long)msg.Msg.MessageTimestamp;
+                        if (messageAge > Constants.STATUS_EXPIRY_SECONDS)
+                        {
+                            Logger.Debug(new { msgId = msg.Msg.Key.Id, messageAge, remoteJid = msg.Msg.Key.RemoteJid },
+                                "skipping retry for expired status message");
+                            SendMessageAck(node);
+                            return;
+                        }
+                    }
+
                     var encNode = GetBinaryNodeChild(node, "enc");
                     SendRetryRequest(node, encNode != null);
                 }
                 else
                 {
-                    // no type in the receipt => message delivered
-                    var type = MessageReceiptType.Undefined;
-                    var participant = msg.Msg.Key.Participant;
-                    if (msg.Category == "peer") // special peer message
+                    SendMessageAck(node);
+
+                    // Suppress receipts for newsletter messages to prevent disconnection
+                    // Ported from Baileys JS (commit 9b012ba)
+                    var isNewsletter = JidUtils.IsJidNewsletter(msg.Msg.Key.RemoteJid);
+                    if (!isNewsletter)
                     {
-                        type = MessageReceiptType.PeerMsg;
-                    }
-                    else if (msg.Msg.Key.FromMe) // message was sent by us from a different device
-                    {
-                        type = MessageReceiptType.Sender;
-                        // need to specially handle this case
-                        if (JidUtils.IsJidUser(msg.Author))
+                        // no type in the receipt => message delivered
+                        var type = MessageReceiptType.Undefined;
+                        var participant = msg.Msg.Key.Participant;
+                        if (msg.Category == "peer") // special peer message
                         {
-                            participant = msg.Author;
+                            type = MessageReceiptType.PeerMsg;
+                        }
+                        else if (msg.Msg.Key.FromMe) // message was sent by us from a different device
+                        {
+                            type = MessageReceiptType.Sender;
+                            // need to specially handle this case
+                            if (JidUtils.IsJidUser(msg.Author))
+                            {
+                                participant = msg.Author;
+                            }
+                        }
+                        else if (!SendActiveReceipts)
+                        {
+                            type = MessageReceiptType.Inactive;
+                        }
+
+                        SendReceipt(msg.Msg.Key.RemoteJid, participant, type, msg.Msg.Key.Id);
+
+                        var isAnyHistoryMsg = HistoryUtil.GetHistoryMsg(msg.Msg.Message);
+                        if (isAnyHistoryMsg != null)
+                        {
+                            var jid = JidUtils.JidNormalizedUser(msg.Msg.Key.RemoteJid);
+                            SendReceipt(jid, default, MessageReceiptType.HistSync, msg.Msg.Key.Id);
                         }
                     }
-                    else if (!SendActiveReceipts)
+                    else
                     {
-                        type = MessageReceiptType.Inactive;
-                    }
-
-                    SendReceipt(msg.Msg.Key.RemoteJid, participant, type, msg.Msg.Key.Id);
-
-                    var isAnyHistoryMsg = HistoryUtil.GetHistoryMsg(msg.Msg.Message);
-                    if (isAnyHistoryMsg != null)
-                    {
-                        var jid = JidUtils.JidNormalizedUser(msg.Msg.Key.RemoteJid);
-                        SendReceipt(jid, default, MessageReceiptType.HistSync, msg.Msg.Key.Id);
+                        Logger.Debug(new { key = msg.Msg.Key }, "processed newsletter message without receipts");
                     }
                 }
 
@@ -725,7 +759,8 @@ namespace BaileysCSharp.Core.Sockets
 
                 await UpsertMessage(msg.Msg, node.getattr("offline") != null ? MessageEventType.Append : MessageEventType.Notify);
             });
-            SendMessageAck(node);
+            // Ack is now sent inside the processing block (for non-ciphertext messages)
+            // or via SendRetryRequest (for ciphertext). Ported from Baileys JS ack refactor (commit c4e5d12).
         }
 
         private bool ShouldIgnoreJid(string value)
@@ -827,15 +862,17 @@ namespace BaileysCSharp.Core.Sockets
             //Check Retries
             MessageRetries.TryAdd(msgId, 0);
 
-            var retryCount = MessageRetries[msgId];
+            // Ported from Baileys JS (commit 1408499): move retryCount increment
+            // BEFORE validating session, so the count is accurate for the check
+            var retryCount = MessageRetries[msgId] + 1;
+            MessageRetries[msgId] = retryCount;
+
             if (retryCount > MaxMsgRetryCount)
             {
                 Logger.Debug(new { retryCount, msgId }, "reached retry limit, clearing");
                 MessageRetries.Remove(msgId);
                 return;
             }
-            retryCount++;
-            MessageRetries[msgId] = retryCount;
 
             var deviceIdentity = ValidateConnectionUtil.EncodeSignedDeviceIdentity(Creds.Account, true);
 
