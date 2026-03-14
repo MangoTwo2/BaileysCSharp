@@ -34,7 +34,7 @@ namespace BaileysCSharp.Core.NoSQL
             State = new ConnectionState();
             EV = ev;
             Logger = logger;
-            database = new LiteDatabase($"{root}\\store.db");
+            database = new LiteDatabase(":memory:");
 
             chats = new Store<ChatModel>(database);
             contacts = new Store<ContactModel>(database);
@@ -427,21 +427,7 @@ namespace BaileysCSharp.Core.NoSQL
         bool changes = true;
         private void OnCheckpoint(object? state)
         {
-            lock (locker)
-            {
-                if (changes)
-                {
-                    try
-                    {
-                        database.Checkpoint();
-                    }
-                    catch (Exception)
-                    {
-
-                    }
-                }
-                changes = false;
-            }
+            // No-op: using in-memory LiteDB, no WAL to checkpoint
         }
 
         public Message? GetMessage(MessageKey key)
@@ -495,10 +481,8 @@ namespace BaileysCSharp.Core.NoSQL
         public DefaultLogger Logger { get; }
         public void DisposeDb()
         {
-            changes = true;
-            OnCheckpoint(null);
-            database?.Dispose();
-            checkPoint?.Dispose();
+            try { database?.Dispose(); } catch { }
+            try { checkPoint?.Dispose(); } catch { }
         }
         public List<ContactModel> GetAllContact()
         {
