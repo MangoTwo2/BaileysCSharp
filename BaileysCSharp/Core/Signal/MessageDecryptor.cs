@@ -54,7 +54,15 @@ namespace BaileysCSharp.Core.Signal
                                     break;
                                 case "pkmsg":
                                 case "msg":
+                                    // For LID-based messages, use sender_pn (phone number) for Signal session lookup
+                                    // since sessions are established with @s.whatsapp.net JIDs, not @lid JIDs
                                     var user = IsJidUser(Sender) ? Sender : Author;
+                                    if (!IsJidUser(user))
+                                    {
+                                        var senderPn = Stanza.getattr("sender_pn");
+                                        if (!string.IsNullOrEmpty(senderPn))
+                                            user = senderPn;
+                                    }
                                     msgBuffer = Repository.DecryptMessage(user, e2eType, buffer);
                                     break;
                                 default:

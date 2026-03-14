@@ -257,6 +257,14 @@ namespace BaileysCSharp.Core
                 anyTriggered = anyTriggered || await Emit($"{DEF_CALLBACK_PREFIX}{l0},,{l2}", frame) || anyTriggered;
                 anyTriggered = anyTriggered || await Emit($"{DEF_CALLBACK_PREFIX}{l0}", frame) || anyTriggered;
 
+                // Log all incoming frame tags for diagnostics
+                try
+                {
+                    var logPath = Path.Combine(SocketConfig.CacheRoot, "native_bridge.log");
+                    File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] frame: tag={l0}, attrs=[{string.Join(",", l1.Select(kv => $"{kv.Key}={kv.Value}"))}], child={l2}, triggered={anyTriggered}\n");
+                }
+                catch { }
+
                 if (!anyTriggered && Logger.Level == LogLevel.Debug)
                 {
                     Logger.Debug(new { unhandled = true, msgId, fromMe = false, frame }, "communication recv");
