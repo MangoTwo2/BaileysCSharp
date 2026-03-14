@@ -662,19 +662,33 @@ namespace BaileysCSharp.Core.Sockets
 
         private async Task<bool> OnMessage(BinaryNode node)
         {
+            LogNative($"OnMessage ENTER: from={node.getattr("from")}, id={node.getattr("id")}");
             return await ProcessNodeWithBuffer(node, "processing message", HandleMessage);
+        }
+
+        private void LogNative(string text)
+        {
+            try { File.AppendAllText(Path.Combine(SocketConfig.CacheRoot, "native_bridge.log"), $"[{DateTime.Now:HH:mm:ss}] {text}\n"); } catch { }
         }
 
         private async Task HandleMessage(BinaryNode node)
         {
+            var from = node.getattr("from") ?? "(null)";
+            var type = node.getattr("type") ?? "(null)";
+            var category = node.getattr("category") ?? "(null)";
+            var id = node.getattr("id") ?? "(null)";
+            LogNative($"HandleMessage ENTER: from={from}, type={type}, category={category}, id={id}");
+
             if (ShouldIgnoreJid(node.getattr("from")) && node.getattr("from") != "@s.whatsapp.net")
             {
-                Logger.Debug(new { key = node.getattr("key") }, "ignored message");
+                LogNative($"HandleMessage: IGNORED jid={from}");
                 SendMessageAck(node);
                 return;
             }
 
+            LogNative($"HandleMessage: calling DecryptMessageNode...");
             var msg = MessageDecoder.DecryptMessageNode(node, Creds.Me.ID, Creds.Me.LID ?? "", Repository, Logger);
+            LogNative($"HandleMessage: DecryptMessageNode done, key.remoteJid={msg.Msg.Key?.RemoteJid}, stubType={msg.Msg.MessageStubType}");
 
             // Store LID↔PN mappings from incoming message addressing context
             // Ported from Baileys JS messages-recv.ts handleMessage
@@ -724,10 +738,12 @@ namespace BaileysCSharp.Core.Sockets
                 }
             }
 
+            LogNative($"HandleMessage: entering processingMutex...");
             await processingMutex.Mutex(async () =>
             {
+                LogNative($"HandleMessage: inside mutex, calling Decrypt...");
                 msg.Decrypt();
-
+                LogNative($"HandleMessage: Decrypt done, stubType={msg.Msg.MessageStubType}, hasMessage={msg.Msg.Message != null}, body={msg.Msg.Message?.Conversation?.Substring(0, Math.Min(msg.Msg.Message?.Conversation?.Length ?? 0, 50))}");
 
                 // message failed to decrypt
                 if (msg.Msg.MessageStubType == WebMessageInfo.Types.StubType.Ciphertext)
@@ -796,8 +812,10 @@ namespace BaileysCSharp.Core.Sockets
 
                 CleanMessage(msg.Msg, Creds.Me.ID);
 
-
-                await UpsertMessage(msg.Msg, node.getattr("offline") != null ? MessageEventType.Append : MessageEventType.Notify);
+                var upsertType = node.getattr("offline") != null ? MessageEventType.Append : MessageEventType.Notify;
+                LogNative($"HandleMessage: calling UpsertMessage type={upsertType}...");
+                await UpsertMessage(msg.Msg, upsertType);
+                LogNative($"HandleMessage: UpsertMessage done");
             });
             // Ack is now sent inside the processing block (for non-ciphertext messages)
             // or via SendRetryRequest (for ciphertext). Ported from Baileys JS ack refactor (commit c4e5d12).
