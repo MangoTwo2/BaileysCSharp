@@ -28,7 +28,7 @@ namespace BaileysCSharp.Core.Sockets
         }
         //public bool SendActiveReceipts;
         public long MaxMsgRetryCount { get; set; } = 5;
-        private static Mutex mut = new Mutex();
+        private static SemaphoreSlim mut = new SemaphoreSlim(1, 1);
 
         protected MessagesRecvSocket([NotNull] SocketConfig config) : base(config)
         {
@@ -55,7 +55,7 @@ namespace BaileysCSharp.Core.Sockets
         public async Task<bool> ProcessNodeWithBuffer(BinaryNode node, string identifier, Func<BinaryNode, Task> action)
         {
             EV.Buffer();
-            mut.WaitOne();
+            await mut.WaitAsync();
             try
             {
                 await action(node);
@@ -64,8 +64,11 @@ namespace BaileysCSharp.Core.Sockets
             {
                 OnUnexpectedError(ex, identifier);
             }
+            finally
+            {
+                mut.Release();
+            }
             EV.Flush();
-            mut.ReleaseMutex();
 
             return true;
         }
