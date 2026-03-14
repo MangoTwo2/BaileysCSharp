@@ -5,7 +5,7 @@ namespace BaileysCSharp.Core.Events.Stores
 {
     public class MessagingEventStore : DataEventStore<MessageEventModel>
     {
-        public MessagingEventStore() : base(true)
+        public MessagingEventStore() : base(false)
         {
         }
 
