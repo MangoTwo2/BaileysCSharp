@@ -8,9 +8,7 @@ namespace BaileysCSharp.LibSignal
         public SessonException() { }
         public SessonException(string message) : base(message) { }
         public SessonException(string message, Exception inner) : base(message, inner) { }
-        protected SessonException(
-          System.Runtime.Serialization.SerializationInfo info,
-          System.Runtime.Serialization.StreamingContext context) : base(info, context) { }
+        // Removed obsolete serialization constructor (SYSLIB0051)
     }
 
     [Serializable]

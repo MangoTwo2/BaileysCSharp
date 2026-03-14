@@ -122,7 +122,7 @@ namespace BaileysCSharp.Core.Helper
 
         public static byte[] EncryptAESGCM(byte[] plaintext, byte[] encKey, byte[] iv, byte[] hash)
         {
-            using (AesGcm aesGcm = new AesGcm(encKey))
+            using (AesGcm aesGcm = new AesGcm(encKey, AesGcm.TagByteSizes.MaxSize))
             {
                 byte[] tag = new byte[AesGcm.TagByteSizes.MaxSize];
                 byte[] ciphertext = new byte[plaintext.Length];
@@ -137,7 +137,7 @@ namespace BaileysCSharp.Core.Helper
             try
             {
                 var GCM_TAG_LENGTH = 128 >> 3;
-                using (AesGcm aesGcm = new AesGcm(encKey))
+                using (AesGcm aesGcm = new AesGcm(encKey, AesGcm.TagByteSizes.MaxSize))
                 {
                     var enc = ciphertext.Slice(0, ciphertext.Length - GCM_TAG_LENGTH);
                     var tag = ciphertext.Slice(ciphertext.Length - GCM_TAG_LENGTH);
@@ -249,18 +249,19 @@ namespace BaileysCSharp.Core.Helper
             return signed.ToArray();
         }
 
-        // Decrypt a string into a string using a key and an IV 
+        // Decrypt a string into a string using a key and an IV
         public static string DecryptCipherIV(byte[] key, byte[] data, byte[] iv)
         {
             try
             {
-                using (var rijndaelManaged = new RijndaelManaged { Key = key, IV = iv, Mode = CipherMode.CBC })
-                using (var memoryStream = new MemoryStream(data))
-                using (var cryptoStream = new CryptoStream(memoryStream, rijndaelManaged.CreateDecryptor(key, iv),
-                           CryptoStreamMode.Read))
-                {
-                    return new StreamReader(cryptoStream).ReadToEnd();
-                }
+                using var aes = Aes.Create();
+                aes.Key = key;
+                aes.IV = iv;
+                aes.Mode = CipherMode.CBC;
+                using var memoryStream = new MemoryStream(data);
+                using var cryptoStream = new CryptoStream(memoryStream, aes.CreateDecryptor(key, iv),
+                           CryptoStreamMode.Read);
+                return new StreamReader(cryptoStream).ReadToEnd();
             }
             catch (CryptographicException e)
             {

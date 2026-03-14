@@ -22,8 +22,8 @@ namespace BaileysCSharp.Core.Models
         public string[] Browser { get; set; }
         public SocketConfig()
         {
-            Browser = Browsers.Ubuntu("Chrome");
-            Version = [2, 3000, 1015901307];
+            Browser = Browsers.MacOS("Chrome");
+            Version = [2, 3000, 1033846690];
             Logger = new DefaultLogger();
             Logger.Level = LogLevel.Trace;
             AppStateMacVerification = new AppStateMacVerification();
@@ -61,9 +61,19 @@ namespace BaileysCSharp.Core.Models
         {
             get
             {
-                return Path.GetDirectoryName(typeof(BaseSocket).Assembly.Location);
+                var loc = typeof(BaseSocket).Assembly.Location;
+                if (!string.IsNullOrEmpty(loc))
+                    return Path.GetDirectoryName(loc)!;
+                // Single-file publish: assembly location is empty, fall back to current directory
+                return AppContext.BaseDirectory;
             }
         }
+
+        /// <summary>
+        /// Override the cache/auth directory. When set, CacheRoot returns this directly
+        /// instead of computing from assembly location + SessionName.
+        /// </summary>
+        public string? CacheRootOverride { get; set; }
         public SignalRepository MakeSignalRepository(EventEmitter ev)
         {
             return new SignalRepository(Auth);
@@ -83,7 +93,7 @@ namespace BaileysCSharp.Core.Models
         {
             get
             {
-                var path = Path.Combine(Root, SessionName);
+                var path = CacheRootOverride ?? Path.Combine(Root, SessionName);
                 if (!Directory.Exists(path))
                 {
                     Directory.CreateDirectory(path);
