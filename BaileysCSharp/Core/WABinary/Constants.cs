@@ -1,5 +1,5 @@
 ﻿using BaileysCSharp.Core.Models;
-using static Proto.Message.Types.HistorySyncNotification.Types;
+using static Proto.HistorySync.Types;
 using static Proto.WebMessageInfo.Types;
 
 namespace BaileysCSharp.Core.WABinary

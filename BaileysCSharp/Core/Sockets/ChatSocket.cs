@@ -130,10 +130,9 @@ namespace BaileysCSharp.Core
             }
 
             var historyMsg = HistoryUtil.GetHistoryMsg(msg.Message);
-            var shouldProcessHistoryMsg = historyMsg != null ?
-                (ShouldSyncHistoryMessage(historyMsg)
-                && Constants.PROCESSABLE_HISTORY_TYPES.Contains(historyMsg.SyncType))
-                : false;
+            // SyncType moved from HistorySyncNotification to HistorySync in newer proto —
+            // process all history notifications and let DownloadAndProcess filter by type
+            var shouldProcessHistoryMsg = historyMsg != null && ShouldSyncHistoryMessage(historyMsg);
 
             if (historyMsg != null && Creds?.MyAppStateKeyId == null)
             {

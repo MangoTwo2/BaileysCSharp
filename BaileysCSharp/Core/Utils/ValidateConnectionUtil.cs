@@ -258,7 +258,7 @@ namespace BaileysCSharp.Core.Utils
                 ID = jid,
                 Name = bizName
             };
-            creds.Account = new Account()
+            creds.Account = new BaileysCSharp.Core.Types.Account()
             {
                 AccountSignature = account.AccountSignature.ToByteArray(),
                 AccountSignatureKey = account.AccountSignatureKey.ToByteArray(),
@@ -278,7 +278,7 @@ namespace BaileysCSharp.Core.Utils
 
 
 
-        public static byte[] EncodeSignedDeviceIdentity(Account account, bool includeSignatureKey)
+        public static byte[] EncodeSignedDeviceIdentity(BaileysCSharp.Core.Types.Account account, bool includeSignatureKey)
         {
             return EncodeSignedDeviceIdentity(new ADVSignedDeviceIdentity()
             {
