@@ -424,6 +424,37 @@ namespace BaileysCSharp.Core
             await SendPassiveIq("active");
 
             Logger.Info("opened connection to WA");
+
+            // Store own LID from success node and update creds
+            // Ported from Baileys JS socket.ts CB:success handler
+            var lidFromServer = node.getattr("lid");
+            if (!string.IsNullOrEmpty(lidFromServer) && Creds?.Me != null)
+            {
+                Creds.Me.LID = lidFromServer;
+                EV.Emit(EmitType.Update, Creds);
+                Logger.Info(new { lid = lidFromServer }, "received LID from server");
+
+                // Store our own LID-PN mapping and migrate session
+                try
+                {
+                    var myPN = Creds.Me.ID;
+                    Repository.LIDMapping.StoreLIDPNMappings(new[]
+                    {
+                        new Signal.LIDMapping { LID = lidFromServer, PN = myPN }
+                    });
+
+                    // Migrate our own session from PN to LID
+                    var result = Repository.MigrateSession(myPN, lidFromServer);
+                    Logger.Info(new { myPN, lid = lidFromServer, result.migrated },
+                        "Own LID session migration complete");
+                }
+                catch (Exception error)
+                {
+                    Logger.Error(new { error = error.Message, lid = lidFromServer },
+                        "Failed to setup own LID mapping/session");
+                }
+            }
+
             EV.Emit(EmitType.Update, new ConnectionState() { Connection = WAConnectionState.Open });
             SendUnifiedSession();
             return true;

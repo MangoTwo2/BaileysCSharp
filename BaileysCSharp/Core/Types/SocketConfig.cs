@@ -76,7 +76,7 @@ namespace BaileysCSharp.Core.Models
         public string? CacheRootOverride { get; set; }
         public SignalRepository MakeSignalRepository(EventEmitter ev)
         {
-            return new SignalRepository(Auth);
+            return new SignalRepository(Auth, Logger);
         }
 
         internal MemoryStore MakeStore(EventEmitter ev, DefaultLogger logger)

@@ -674,7 +674,47 @@ namespace BaileysCSharp.Core.Sockets
                 return;
             }
 
-            var msg = MessageDecoder.DecryptMessageNode(node, Creds.Me.ID, Creds.Me.LID, Repository, Logger);
+            var msg = MessageDecoder.DecryptMessageNode(node, Creds.Me.ID, Creds.Me.LID ?? "", Repository, Logger);
+
+            // Store LID↔PN mappings from incoming message addressing context
+            // Ported from Baileys JS messages-recv.ts handleMessage
+            var (_, senderAlt, _) = MessageDecoder.ExtractAddressingContext(node);
+            if (!string.IsNullOrEmpty(senderAlt))
+            {
+                try
+                {
+                    var altServer = JidUtils.JidDecode(senderAlt)?.Server;
+                    var primaryJid = msg.Msg.Key.Participant;
+                    if (string.IsNullOrWhiteSpace(primaryJid))
+                        primaryJid = msg.Msg.Key.RemoteJid;
+
+                    if (altServer == "lid")
+                    {
+                        // Alt is LID, primary is PN
+                        if (Repository.LIDMapping.GetPNForLID(senderAlt) == null)
+                        {
+                            Repository.LIDMapping.StoreLIDPNMappings(new[]
+                            {
+                                new Signal.LIDMapping { LID = senderAlt, PN = primaryJid }
+                            });
+                            Repository.MigrateSession(primaryJid, senderAlt);
+                        }
+                    }
+                    else if (!string.IsNullOrEmpty(primaryJid))
+                    {
+                        // Alt is PN, primary is LID
+                        Repository.LIDMapping.StoreLIDPNMappings(new[]
+                        {
+                            new Signal.LIDMapping { LID = primaryJid, PN = senderAlt }
+                        });
+                        Repository.MigrateSession(senderAlt, primaryJid);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn(new { error = ex.Message }, "Failed to store LID mapping from message");
+                }
+            }
 
             if (msg.Msg.Message?.ProtocolMessage?.Type == Message.Types.ProtocolMessage.Types.Type.SharePhoneNumber)
             {

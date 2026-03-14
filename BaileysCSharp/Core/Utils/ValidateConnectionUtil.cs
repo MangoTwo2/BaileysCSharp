@@ -180,6 +180,7 @@ namespace BaileysCSharp.Core.Utils
 
             var bizName = businessNode?.attrs["name"];
             var jid = deviceNode.attrs["jid"];
+            var lid = deviceNode.getattr("lid"); // LID assigned during pairing
 
             var detailsHmac = ADVSignedDeviceIdentityHMAC.Parser.ParseFrom(deviceIdentityNode.ToByteArray());
 
@@ -210,8 +211,8 @@ namespace BaileysCSharp.Core.Utils
             .Concat(account.AccountSignatureKey).ToArray();
             account.DeviceSignature = CryptoUtils.Sign(signedIdentityKey.Private, deviceMsg).ToByteString();
 
-            //TODO: Finish 
-            var identity = CreateSignalIdentity(jid, account.AccountSignatureKey);
+            // Use LID for signal identity if available, matching Baileys JS
+            var identity = CreateSignalIdentity(lid ?? jid, account.AccountSignatureKey);
             var accountEnc = EncodeSignedDeviceIdentity(account, false);
 
 
@@ -256,7 +257,8 @@ namespace BaileysCSharp.Core.Utils
             creds.Me = new ContactModel()
             {
                 ID = jid,
-                Name = bizName
+                Name = bizName,
+                LID = lid
             };
             creds.Account = new BaileysCSharp.Core.Types.Account()
             {

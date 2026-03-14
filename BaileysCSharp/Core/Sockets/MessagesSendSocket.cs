@@ -292,6 +292,7 @@ namespace BaileysCSharp.Core.Sockets
         public async Task RelayMessage(string jid, Message message, IMessageRelayOptions options)
         {
             var meId = Creds.Me.ID;
+            var meLid = Creds.Me?.LID;
             var shouldIncludeDeviceIdentity = false;
 
             var jidDecoded = JidDecode(jid);
@@ -305,9 +306,6 @@ namespace BaileysCSharp.Core.Sockets
             var isLid = server == "lid";
 
             options.MessageID = options.MessageID ?? GenerateMessageID();
-
-            //options.UseUserDevicesCache = options.UseUserDevicesCache != false;
-
 
             var participants = new List<BinaryNode>();
             var destinationJid = (!isStatus) ? JidEncode(user, isLid ? "lid" : isGroup ? "g.us" : isNewsletter ? "newsletter" : "s.whatsapp.net") : statusId;
@@ -372,11 +370,14 @@ namespace BaileysCSharp.Core.Sockets
                     devices.AddRange(additionalDevices);
                 }
 
+                // Use LID as group sender identity when addressing mode is LID
+                // Ported from Baileys JS messages-send.ts relayMessage group section
+                var groupSenderIdentity = !string.IsNullOrEmpty(meLid) ? meLid : meId;
 
                 var patched = SocketConfig.PatchMessageBeforeSending(message, devices.Select(x => JidEncode(x.User, isLid ? "lid" : "s.whatsapp.net", x.Device)).ToArray());
-                var bytes = EncodeWAMessage(patched);//.ToByteArray();
+                var bytes = EncodeWAMessage(patched);
 
-                var encGroup = Repository.EncryptGroupMessage(destinationJid, meId, bytes);
+                var encGroup = Repository.EncryptGroupMessage(destinationJid, groupSenderIdentity, bytes);
 
 
                 List<string> senderKeyJids = new List<string>();
@@ -445,24 +446,42 @@ namespace BaileysCSharp.Core.Sockets
             }
             else
             {
-                var me = JidDecode(meId);
+                // ADDRESSING CONSISTENCY: Match own identity to conversation context
+                // Ported from Baileys JS messages-send.ts relayMessage 1:1 section
+                var ownId = meId;
+                if (isLid && !string.IsNullOrEmpty(meLid))
+                {
+                    ownId = meLid;
+                    Logger.Debug(new { to = jid, ownId }, "Using LID identity for @lid conversation");
+                }
+
+                var me = JidDecode(ownId);
                 var meUser = me.User;
                 var meDevice = me.Device;
 
+                // Also decode PN user for comparison
+                var mePnUser = JidDecode(meId)?.User;
+                var meLidUser = !string.IsNullOrEmpty(meLid) ? JidDecode(meLid)?.User : null;
+
                 if (options.Participant == null)
                 {
-                    //options.Participant = new MessageParticipant()
-                    //{
-                    //    Count = 0,
-                    //    Jid = jid
-                    //};
+                    // Use conversation-appropriate addressing for target and sender
+                    var targetUserServer = isLid ? "lid" : "s.whatsapp.net";
                     devices.Add(new JidWidhDevice() { User = user });
-                    // do not send message to self if the device is 0 (mobile)
-                    if (meDevice != null && meDevice != 0)
+
+                    if (user != meUser)
                     {
-                        devices.Add(new JidWidhDevice() { User = meUser });
+                        var ownUserServer = isLid ? "lid" : "s.whatsapp.net";
+                        var ownUserForAddressing = isLid && !string.IsNullOrEmpty(meLid) ? JidDecode(meLid)?.User : JidDecode(meId)?.User;
+                        devices.Add(new JidWidhDevice() { User = ownUserForAddressing });
                     }
-                    var additionalDevices = await GetUSyncDevices([meId, jid], options.UseUserDevicesCache ?? false, true);
+
+                    // Use conversation-appropriate sender identity for device enumeration
+                    var senderIdentity = isLid && !string.IsNullOrEmpty(meLid)
+                        ? JidEncode(JidDecode(meLid).User, "lid")
+                        : JidEncode(JidDecode(meId).User, "s.whatsapp.net");
+
+                    var additionalDevices = await GetUSyncDevices([senderIdentity, jid], options.UseUserDevicesCache ?? false, true);
                     devices.AddRange(additionalDevices);
                 }
 
@@ -473,8 +492,20 @@ namespace BaileysCSharp.Core.Sockets
                 {
                     var iuser = item.User;
                     var idevice = item.Device;
-                    var isMe = iuser == meUser;
-                    var addJid = JidEncode((isMe && isLid) ? Creds.Me.LID.Split(":")[0] ?? iuser : iuser, isLid ? "lid" : "s.whatsapp.net", idevice);
+
+                    var addJid = JidEncode(iuser, isLid ? "lid" : "s.whatsapp.net", idevice);
+
+                    // Skip exact sender device (our primary device)
+                    // Ported from Baileys JS whatsmeow pattern
+                    if (addJid == meId || (!string.IsNullOrEmpty(meLid) && addJid == meLid))
+                    {
+                        Logger.Debug(new { jid = addJid, meId, meLid }, "Skipping exact sender device");
+                        continue;
+                    }
+
+                    // Check if this is our device (could match either PN or LID user)
+                    var isMe = iuser == mePnUser || (meLidUser != null && iuser == meLidUser);
+
                     if (isMe)
                     {
                         meJids.Add(addJid);
