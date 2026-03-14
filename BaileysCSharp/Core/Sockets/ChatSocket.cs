@@ -140,7 +140,7 @@ namespace BaileysCSharp.Core
                 PendingAppStateSync = true;
             }
 
-            var t1 = new Task(async () =>
+            var t1 = Task.Run(async () =>
             {
                 if (historyMsg != null && Creds.MyAppStateKeyId != null)
                 {
@@ -149,13 +149,11 @@ namespace BaileysCSharp.Core
                 }
             });
 
-            var t2 = new Task(async () =>
+            var t2 = Task.Run(async () =>
             {
                 await ProcessMessageUtil.ProcessMessage(msg, shouldProcessHistoryMsg, Creds, Keys, Store, EV);
             });
-            t1.Start();
-            t2.Start();
-            Task.WaitAll(t1, t2);
+            await Task.WhenAll(t1, t2);
             if (historyMsg?.HasProgress ?? false)
                 EV.Emit(EmitType.Update, new SyncState() { Msg = "Sync Data ", Prograss = historyMsg.Progress });
 
