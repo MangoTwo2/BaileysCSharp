@@ -694,6 +694,13 @@ namespace BaileysCSharp.Core
         public void OnUnexpectedError(Exception error, string message)
         {
             Logger.Error(error, $"unexpected error in '{message}'");
+            // Also write to native bridge log for diagnostics
+            try
+            {
+                var logPath = Path.Combine(SocketConfig.CacheRoot, "native_bridge.log");
+                File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] ERROR in '{message}': {error.GetType().Name}: {error.Message}\n{error.StackTrace?.Split('\n').FirstOrDefault()}\n");
+            }
+            catch { }
         }
 
         /// <summary>
