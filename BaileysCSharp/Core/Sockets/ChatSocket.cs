@@ -668,10 +668,15 @@ namespace BaileysCSharp.Core
         public void SendPresenceUpdate(WAPresence type, string toJid = "")
         {
             var me = Creds?.Me;
+            try { File.AppendAllText(Path.Combine(SocketConfig.CacheRoot, "native_bridge.log"), $"[{DateTime.Now:HH:mm:ss}] SendPresenceUpdate: type={type}, me.Name={me?.Name}, me.ID={me?.ID}\n"); } catch { }
             if (type == WAPresence.Available || type == WAPresence.Unavailable)
             {
-                // Use Name, falling back to ID — presence MUST be sent for message delivery
-                var displayName = me?.Name ?? me?.ID?.Split('@')[0] ?? "ProtoShell";
+                // Use Name, falling back to phone number (strip device suffix and @domain)
+                var rawId = me?.ID?.Split('@')[0] ?? "";
+                var colonIdx = rawId.IndexOf(':');
+                var displayName = me?.Name ?? (colonIdx > 0 ? rawId[..colonIdx] : rawId);
+                if (string.IsNullOrEmpty(displayName)) displayName = "ProtoShell";
+                try { File.AppendAllText(Path.Combine(SocketConfig.CacheRoot, "native_bridge.log"), $"[{DateTime.Now:HH:mm:ss}] SendPresenceUpdate: sending presence name={displayName}\n"); } catch { }
                 EV.Emit(EmitType.Update, new ConnectionState() { IsOnline = type == WAPresence.Available });
 
                 SendNode(new BinaryNode()
