@@ -1,2 +1,4 @@
 # Baileys for C#
-TODO!
+
+
+An up-to-date fork that bring BaileysCSharp up to speed with Baileys JS.
