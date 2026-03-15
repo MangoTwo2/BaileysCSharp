@@ -863,7 +863,7 @@ namespace BaileysCSharp.Core.Sockets
             SendNode(stanza);
         }
 
-        private void SendReceipt(string jid, string? participant, string type, params string[] messageIds)
+        public void SendReceipt(string jid, string? participant, string type, params string[] messageIds)
         {
 
             var node = new BinaryNode("receipt")
