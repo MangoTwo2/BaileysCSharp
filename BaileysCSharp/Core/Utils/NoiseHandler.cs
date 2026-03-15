@@ -420,5 +420,6 @@ namespace BaileysCSharp.Core.Utils
             var hkdf = CryptoUtils.HKDF(bytes, 64, Salt, Encoding.UTF8.GetBytes(""));
             return (hkdf.Take(32).ToArray(), hkdf.Skip(32).ToArray());
         }
+
     }
 }

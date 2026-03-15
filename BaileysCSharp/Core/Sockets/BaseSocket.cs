@@ -25,7 +25,6 @@ namespace BaileysCSharp.Core
     public abstract class BaseSocket : IDisposable
     {
         protected ConcurrentDictionary<string, TaskCompletionSource<BinaryNode>> waits = new ConcurrentDictionary<string, TaskCompletionSource<BinaryNode>>();
-        private readonly SemaphoreSlim _frameProcessingSemaphore = new(1, 1);
 
         private string[] Browser = ["Ubuntu", "Chrome", "20.0.04",];
         protected AbstractSocketClient WS;
@@ -222,61 +221,51 @@ namespace BaileysCSharp.Core
 
         private async void OnFrameDeecoded(BinaryNode frame)
         {
-            // Serialize frame processing to prevent out-of-order handling
-            // (the receive loop fires this as async void, so concurrent frames can overlap)
-            await _frameProcessingSemaphore.WaitAsync();
-            try
-            {
-                bool anyTriggered = await Emit("frame", frame);
+            bool anyTriggered = await Emit("frame", frame);
 
-                if (frame.tag != "handshake")
+            if (frame.tag != "handshake")
+            {
+                var msgId = frame.getattr("id");
+
+                if (Logger.Level == LogLevel.Trace)
                 {
-                    var msgId = frame.getattr("id");
-
-                    if (Logger.Level == LogLevel.Trace)
-                    {
-                        Logger.Trace(new { xml = frame }, "recv send");
-                    }
-
-                    /* Check if this is a response to a message we sent */
-                    anyTriggered = anyTriggered || await Emit($"{DEF_TAG_PREFIX}{msgId}", frame);
-
-                    /* Check if this is a response to a message we are expecting */
-                    var l0 = frame.tag;
-                    var l1 = frame.attrs;
-
-                    var l2 = "";
-                    if (frame.content is BinaryNode[] children)
-                    {
-                        l2 = children[0].tag;
-                    }
-
-                    foreach (var item in l1)
-                    {
-                        anyTriggered = anyTriggered || await Emit($"{DEF_CALLBACK_PREFIX}{l0},{item.Key}:{l1[item.Key]},{l2}", frame);
-                        anyTriggered = anyTriggered || await Emit($"{DEF_CALLBACK_PREFIX}{l0},{item.Key}:{l1[item.Key]}", frame);
-                        anyTriggered = anyTriggered || await Emit($"{DEF_CALLBACK_PREFIX}{l0},{item.Key}", frame);
-                    }
-                    anyTriggered = anyTriggered || await Emit($"{DEF_CALLBACK_PREFIX}{l0},,{l2}", frame) || anyTriggered;
-                    anyTriggered = anyTriggered || await Emit($"{DEF_CALLBACK_PREFIX}{l0}", frame) || anyTriggered;
-
-                    // Log all incoming frame tags for diagnostics
-                    try
-                    {
-                        var logPath = Path.Combine(SocketConfig.CacheRoot, "native_bridge.log");
-                        File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] frame: tag={l0}, attrs=[{string.Join(",", l1.Select(kv => $"{kv.Key}={kv.Value}"))}], child={l2}, triggered={anyTriggered}\n");
-                    }
-                    catch { }
-
-                    if (!anyTriggered && Logger.Level == LogLevel.Debug)
-                    {
-                        Logger.Debug(new { unhandled = true, msgId, fromMe = false, frame }, "communication recv");
-                    }
+                    Logger.Trace(new { xml = frame }, "recv send");
                 }
-            }
-            finally
-            {
-                _frameProcessingSemaphore.Release();
+
+                /* Check if this is a response to a message we sent */
+                anyTriggered = anyTriggered || await Emit($"{DEF_TAG_PREFIX}{msgId}", frame);
+
+                /* Check if this is a response to a message we are expecting */
+                var l0 = frame.tag;
+                var l1 = frame.attrs;
+
+                var l2 = "";
+                if (frame.content is BinaryNode[] children)
+                {
+                    l2 = children[0].tag;
+                }
+
+                foreach (var item in l1)
+                {
+                    anyTriggered = anyTriggered || await Emit($"{DEF_CALLBACK_PREFIX}{l0},{item.Key}:{l1[item.Key]},{l2}", frame);
+                    anyTriggered = anyTriggered || await Emit($"{DEF_CALLBACK_PREFIX}{l0},{item.Key}:{l1[item.Key]}", frame);
+                    anyTriggered = anyTriggered || await Emit($"{DEF_CALLBACK_PREFIX}{l0},{item.Key}", frame);
+                }
+                anyTriggered = anyTriggered || await Emit($"{DEF_CALLBACK_PREFIX}{l0},,{l2}", frame) || anyTriggered;
+                anyTriggered = anyTriggered || await Emit($"{DEF_CALLBACK_PREFIX}{l0}", frame) || anyTriggered;
+
+                // Log all incoming frame tags for diagnostics
+                try
+                {
+                    var logPath = Path.Combine(SocketConfig.CacheRoot, "native_bridge.log");
+                    File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] frame: tag={l0}, attrs=[{string.Join(",", l1.Select(kv => $"{kv.Key}={kv.Value}"))}], child={l2}, triggered={anyTriggered}\n");
+                }
+                catch { }
+
+                if (!anyTriggered && Logger.Level == LogLevel.Debug)
+                {
+                    Logger.Debug(new { unhandled = true, msgId, fromMe = false, frame }, "communication recv");
+                }
             }
         }
 
@@ -514,7 +503,11 @@ namespace BaileysCSharp.Core
             {
                 throw new Exception("Connection Closed");
             }
-            var tcs = new TaskCompletionSource<BinaryNode>(TaskCreationOptions.RunContinuationsAsynchronously);
+            // NOTE: Do NOT use RunContinuationsAsynchronously here.
+            // The handshake TCS continuation must run inline so that ValidateConnection's
+            // FinishInit() sets _transport BEFORE the frame processing semaphore is released,
+            // otherwise post-handshake frames are processed with _transport==null and lost.
+            var tcs = new TaskCompletionSource<BinaryNode>();
             waits["handshake"] = tcs;
             SendRawMessage(bytes);
 
@@ -727,7 +720,6 @@ namespace BaileysCSharp.Core
 
             /** WA noise protocol wrapper */
             noise = MakeNoiseHandler();
-
 
             UniqueTagId = GenerateMdTagPrefix();
             Epoch = 1;

@@ -35,7 +35,9 @@ namespace BaileysCSharp.Core.Sockets.Client
         {
             try
             {
-                await WebSocket.ConnectAsync(new Uri("wss://web.whatsapp.com/ws/chat"), CancellationToken.None);
+                // 15-second timeout on WebSocket connect to prevent indefinite hang
+                using var connectCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                await WebSocket.ConnectAsync(new Uri("wss://web.whatsapp.com/ws/chat"), connectCts.Token);
 
                 if (WebSocket.State == WebSocketState.Open)
                 {
@@ -54,6 +56,9 @@ namespace BaileysCSharp.Core.Sockets.Client
                         EmitReceivedData(frame);
                     }
                 }
+
+                // If ConnectAsync succeeded but state is not Open, still fire disconnect
+                OnDisconnected(Events.DisconnectReason.ConnectionLost);
             }
             catch (Exception ex)
             {
