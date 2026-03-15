@@ -226,6 +226,21 @@ namespace BaileysCSharp.Core.Utils
 
             //Sections
 
+            // Wrap in ProtocolMessage for edits (matching Baileys JS messages.js:489-498)
+            if (message is IEditable editable && editable.Edit != null)
+            {
+                m = new Message()
+                {
+                    ProtocolMessage = new ProtocolMessage()
+                    {
+                        Key = editable.Edit,
+                        EditedMessage = m,
+                        TimestampMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                        Type = ProtocolMessage.Types.Type.MessageEdit
+                    }
+                };
+            }
+
             if (message is IViewOnce viewOnce && viewOnce.ViewOnce)
             {
                 m = new Message()
