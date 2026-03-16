@@ -179,7 +179,7 @@ namespace BaileysCSharp.Core.Utils
 
             if (message is TextMessageContent text)
             {
-                var urlMatch = Regex.Match(text.Text, @"https?://\S+");
+                var urlMatch = Regex.Match(text.Text, @"https://\S+");
                 if (urlMatch.Success)
                 {
                     m.ExtendedTextMessage = new ExtendedTextMessage()
