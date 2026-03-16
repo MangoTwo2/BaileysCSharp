@@ -9,6 +9,7 @@ using Proto;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using static BaileysCSharp.Core.Utils.GenericUtils;
 using static BaileysCSharp.Core.Utils.JidUtils;
 using static BaileysCSharp.Core.Utils.MediaMessageUtil;
@@ -178,12 +179,20 @@ namespace BaileysCSharp.Core.Utils
 
             if (message is TextMessageContent text)
             {
-                m.ExtendedTextMessage = new ExtendedTextMessage()
+                var urlMatch = Regex.Match(text.Text, @"https?://\S+");
+                if (urlMatch.Success)
                 {
-                    Text = text.Text,
-                };
-
-                ///TODO generateLinkPreviewIfRequired
+                    m.ExtendedTextMessage = new ExtendedTextMessage()
+                    {
+                        Text = text.Text,
+                        MatchedText = urlMatch.Value.TrimEnd('.', ',', ')', ']', ';', '!', '?'),
+                        PreviewType = ExtendedTextMessage.Types.PreviewType.None,
+                    };
+                }
+                else
+                {
+                    m.Conversation = text.Text;
+                }
             }
             else if (message is ContactMessageContent contact)
             {
